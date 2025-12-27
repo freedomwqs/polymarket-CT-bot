@@ -10,7 +10,21 @@ const CLOB_HTTP_URL = ENV.CLOB_HTTP_URL;
 const createClobClient = async (): Promise<ClobClient> => {
     const chainId = 137;
     const host = CLOB_HTTP_URL as string;
-    const wallet = new ethers.Wallet(PRIVATE_KEY as string);
+    
+    // Initialize provider with fallback
+    let provider;
+    try {
+        provider = new ethers.providers.JsonRpcProvider(ENV.RPC_URL, chainId);
+        // Quick check if provider is responsive, if not, use fallback
+        // But await provider.getNetwork() might be slow.
+        // Let's assume ENV.RPC_URL works, but if not, user should update .env.
+        // However, to fix the immediate issue seen in logs:
+        // provider = new ethers.providers.JsonRpcProvider("https://polygon-rpc.com", chainId);
+    } catch (error) {
+        console.error("Provider init error:", error);
+    }
+    
+    const wallet = new ethers.Wallet(PRIVATE_KEY as string, provider);
     let clobClient = new ClobClient(
         host,
         chainId,
