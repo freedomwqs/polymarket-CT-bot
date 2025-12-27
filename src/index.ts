@@ -92,18 +92,6 @@ export const main = async () => {
     };
         console.log(`Using default parameters: ${JSON.stringify(params)}`);
 
-        // Initialize and start Claim Service
-        const claimService = new ClaimService();
-        console.log('Starting Automated Claim Service (runs every 5 minutes)...');
-        
-        // Run immediately
-        claimService.checkAndClaim(clobClient).catch(err => console.error('Initial claim check failed:', err));
-
-        // Run every 5 minutes (300000 ms)
-        setInterval(() => {
-            claimService.checkAndClaim(clobClient).catch(err => console.error('Scheduled claim check failed:', err));
-        }, 300000);
-        
         const monitor = new TradeMonitor();
         monitor.on('transaction', (data) => {
             tradeExecutor(clobClient, data, params);
