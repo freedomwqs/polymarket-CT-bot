@@ -79,7 +79,20 @@ export const main = async () => {
     const createClobClientSpinner = ora('Creating ClobClient...').start();
     console.log("VERSION 2.0 - NEW TRADE MONITOR");
     try {
-        const clobClient = await createClobClient();
+        let clobClient: ClobClient | null = null;
+        for (let attempt = 1; attempt <= 5 && !clobClient; attempt++) {
+            try {
+                clobClient = await createClobClient();
+            } catch (e) {
+                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+                await new Promise((r) => setTimeout(r, delay));
+            }
+        }
+        if (!clobClient) {
+            createClobClientSpinner.fail('Failed to initialize ClobClient after retries');
+            console.error('ClobClient initialization failed');
+            return;
+        }
         createClobClientSpinner.succeed('ClobClient created\n');
         
         // Use defaults for PM2/Production environment
@@ -94,19 +107,26 @@ export const main = async () => {
 
         // Initialize and start Claim Service
         const claimService = new ClaimService();
-        console.log('Starting Automated Claim Service (runs every 5 minutes)...');
+        console.log('Starting Automated Claim Service...');
         
-        // Run immediately
-        claimService.checkAndClaim(clobClient).catch(err => console.error('Initial claim check failed:', err));
+        let claimRunning = false;
+        const runClaim = () => {
+            if (claimRunning) return;
+            claimRunning = true;
+            claimService
+                .checkAndClaim(clobClient)
+                .catch(err => console.error('Scheduled claim check failed:', err))
+                .finally(() => {
+                    claimRunning = false;
+                });
+        };
+        runClaim();
 
-        // Run every 5 minutes (300000 ms)
-        setInterval(() => {
-            claimService.checkAndClaim(clobClient).catch(err => console.error('Scheduled claim check failed:', err));
-        }, 300000);
+        setInterval(runClaim, (ENV.CLAIM_INTERVAL_SECONDS || 3600) * 1000);
         
         const monitor = new TradeMonitor();
         monitor.on('transaction', (data) => {
-            tradeExecutor(clobClient, data, params);
+            tradeExecutor(clobClient as ClobClient, data, params);
         });
         
         // Start monitoring all target wallets
@@ -114,7 +134,7 @@ export const main = async () => {
     } catch (error) {
         createClobClientSpinner.fail('Failed to initialize ClobClient');
         console.error(error);
-        process.exit(1);
+        return;
     }
 };
 

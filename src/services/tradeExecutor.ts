@@ -119,12 +119,27 @@ const tradeExecutor = async (
             nonce: 0 // Optional, client handles it
         });
         
-        const response = await clobClient.postOrder(order);
-        console.log('Order executed successfully:', response);
+        let postError: any;
+        for (let attempt = 1; attempt <= (params.retryLimit || 1); attempt++) {
+            try {
+                const response = await clobClient.postOrder(order);
+                console.log('Order executed successfully:', response);
+                postError = null;
+                break;
+            } catch (err) {
+                postError = err;
+                if (attempt < (params.retryLimit || 1)) {
+                    const delay = Math.min(1000 * attempt, 5000);
+                    await new Promise((r) => setTimeout(r, delay));
+                }
+            }
+        }
+        if (postError) {
+            throw postError;
+        }
 
     } catch (error) {
         console.error('Error executing trade:', error);
-        // Implement retry logic based on params.retryLimit here if needed
     }
 };
 
