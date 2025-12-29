@@ -5,8 +5,8 @@ Write-Host "Preparing deployment command..."
 
 $Cmds = @(
     "cd /home/bot/app",
-    "git config --global --add safe.directory /home/bot/app",
     "sudo chown -R bot:bot /home/bot/app",
+    "sudo -u bot -H git config --global --add safe.directory /home/bot/app",
     "sudo -u bot -H git fetch origin prod",
     "sudo -u bot -H git reset --hard origin/prod",
     "sudo -u bot -H npm install",

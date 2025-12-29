@@ -48,5 +48,7 @@ jest-test-results.json
 .eslintcache
 .prettiercache
 
-# Readme.md
-README.md
+# Security
+ssm_*.json
+deploy_check*.ps1
+deploy_logs.ps1
