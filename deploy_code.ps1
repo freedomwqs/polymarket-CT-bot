@@ -6,13 +6,14 @@ Write-Host "Preparing deployment command..."
 $Cmds = @(
     "cd /home/bot/app",
     "git config --global --add safe.directory /home/bot/app",
-    "sudo -u bot git fetch origin prod",
-    "sudo -u bot git reset --hard origin/prod",
-    "sudo -u bot npm install",
-    "sudo -u bot npm run build",
-    "sudo -u bot pm2 restart all --update-env",
-    "sudo -u bot pm2 list",
-    "sudo -u bot pm2 logs --lines 20 --nostream"
+    "sudo chown -R bot:bot /home/bot/app",
+    "sudo -u bot -H git fetch origin prod",
+    "sudo -u bot -H git reset --hard origin/prod",
+    "sudo -u bot -H npm install",
+    "sudo -u bot -H npm run build",
+    "sudo -u bot -H pm2 restart all --update-env",
+    "sudo -u bot -H pm2 list",
+    "sudo -u bot -H pm2 logs --lines 20 --nostream"
 )
 
 $Payload = @{
