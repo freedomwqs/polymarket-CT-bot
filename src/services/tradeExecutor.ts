@@ -27,6 +27,10 @@ const tradeExecutor = async (
                 if (orderbook.asks && orderbook.asks.length > 0) {
                     price = parseFloat(orderbook.asks[0].price);
                     console.log(`Best Ask Price: ${price}`);
+                    if (price >= 1) {
+                        console.warn('Price >= 1 detected for BUY. Skipping order to avoid zero-profit bet.');
+                        return;
+                    }
                 } else {
                     console.warn('No asks found in orderbook. Cannot determine price for BUY.');
                     return;

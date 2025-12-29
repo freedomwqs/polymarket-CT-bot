@@ -1,0 +1,78 @@
+#!/bin/bash
+set -e
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+echo "=== STARTING DEPLOYMENT ==="
+
+# 0. Swap (2GB) - Prevent OOM on t3.micro
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+# 1. Install System Deps
+apt-get update
+apt-get install -y git curl unzip jq build-essential
+
+# 2. Install Bun (Global)
+# Required because the bot uses Bun interpreter
+curl -fsSL https://bun.sh/install | bash
+mv /root/.bun /usr/local/bun
+ln -s /usr/local/bun/bin/bun /usr/local/bin/bun
+# Verify Bun
+bun --version
+
+# 3. Install Node.js & PM2
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+npm install -g pm2 typescript ts-node
+
+# 4. SSM Agent (Ensure it's running)
+# Ubuntu 24.04 usually has it pre-installed via Snap
+if snap list amazon-ssm-agent; then
+    snap refresh amazon-ssm-agent
+else
+    snap install amazon-ssm-agent --classic
+fi
+systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+
+# 5. Setup Bot User & Repo
+id -u bot &>/dev/null || useradd -m -s /bin/bash bot
+chown -R bot:bot /home/bot
+
+# Clone Repo
+echo "Cloning repository..."
+sudo -u bot git clone -b prod --single-branch https://github.com/freedomwqs/polymarket-CT-bot.git /home/bot/app
+
+# Install Deps
+echo "Installing dependencies..."
+cd /home/bot/app
+# Try Bun install first if lockfile exists, else npm
+if [ -f "bun.lockb" ]; then
+    sudo -u bot bun install
+else
+    sudo -u bot npm install
+fi
+
+# 6. Start with PM2
+echo "Starting application..."
+# Check if ecosystem.config.js exists
+if [ -f "ecosystem.config.js" ]; then
+    # Ensure PM2 can find bun if it's used in ecosystem
+    sudo -u bot pm2 start ecosystem.config.js
+else
+    # Fallback to direct start
+    # Try to find the entry point
+    if [ -f "src/index.ts" ]; then
+        sudo -u bot pm2 start src/index.ts --interpreter bun --name "polymarket-bot"
+    else
+        sudo -u bot pm2 start index.js --name "polymarket-bot"
+    fi
+fi
+
+sudo -u bot pm2 save
+pm2 startup systemd -u bot --hp /home/bot
+systemctl enable pm2-bot
+
+echo "=== DEPLOYMENT COMPLETE ==="
