@@ -4,7 +4,6 @@ import { ClobClient } from '@polymarket/clob-client';
 import ora from 'ora';
 import TradeMonitor from './services/tradeMonitor';
 import tradeExecutor from './services/tradeExecutor';
-import { ClaimService } from './services/claimService';
 import { TradeParams } from './interfaces/tradeInterfaces';
 import { TRADER_LIST } from './config/traders';
 import { HttpsProxyAgent } from 'https-proxy-agent';
