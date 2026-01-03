@@ -3,7 +3,7 @@ import { ENV } from './env';
 // List of traders to copy
 export const TRADER_LIST = [
     ENV.USER_ADDRESS,
-    '0x1f0a343513aa6060488fabe96960e6d1e177f7aa', // Updated by user request
+    // '0x1f0a343513aa6060488fabe96960e6d1e177f7aa', // Updated by user request
     // Note: The following are placeholders as we only have usernames for some. 
     // You must replace these with the actual Polygon wallet addresses for the bot to work.
     // Polymarket profiles usually show the address or it can be found in the URL if it's an address-based profile.

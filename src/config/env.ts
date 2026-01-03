@@ -54,4 +54,5 @@ export const ENV = {
     FETCH_INTERVAL: parseInt(process.env.FETCH_INTERVAL || '1000'),
     TOO_OLD_TIMESTAMP: parseInt(process.env.TOO_OLD_TIMESTAMP || '3600'),
     RETRY_LIMIT: parseInt(process.env.RETRY_LIMIT || '3'),
+    PAUSE_TRADING: process.env.PAUSE_TRADING === 'true',
 };

@@ -8,6 +8,11 @@ const tradeExecutor = async (
     tradeData: TradeData,
     params: TradeParams
 ) => {
+    if (ENV.PAUSE_TRADING) {
+        console.log('Trading is paused by configuration. Skipping execution.');
+        return;
+    }
+
     console.log(`Executing copy trade for tx: ${tradeData.transactionHash}`);
     console.log(`TokenID: ${tradeData.tokenId}, Side: ${tradeData.side === 0 ? 'BUY' : 'SELL'}, Original Amount: ${tradeData.takerAmount}`);
 
