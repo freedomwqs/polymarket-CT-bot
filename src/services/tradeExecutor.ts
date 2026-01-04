@@ -2,6 +2,7 @@ import { ClobClient, Side } from '@polymarket/clob-client';
 import { TradeData, TradeParams } from '../interfaces/tradeInterfaces';
 import getMyBalance from '../utils/getMyBalance';
 import { ENV } from '../config/env';
+import OrderManager from './orderManager';
 
 const tradeExecutor = async (
     clobClient: ClobClient,
@@ -13,6 +14,11 @@ const tradeExecutor = async (
         return;
     }
 
+    const orderManager = OrderManager.getInstance();
+
+    // Check for expired orders every time we try to execute
+    await orderManager.checkAndCancelExpiredOrders(clobClient);
+
     console.log(`Executing copy trade for tx: ${tradeData.transactionHash}`);
     console.log(`TokenID: ${tradeData.tokenId}, Side: ${tradeData.side === 0 ? 'BUY' : 'SELL'}, Original Amount: ${tradeData.takerAmount}`);
 
@@ -20,46 +26,70 @@ const tradeExecutor = async (
         // 1. Determine side
         const side = tradeData.side === 0 ? Side.BUY : Side.SELL;
 
-        // 2. Fetch Market Price (Best Ask for Buy, Best Bid for Sell)
-        // We need the orderbook to price our limit order effectively (simulate market order)
-        let price = 0;
+        // 2. Determine Price (Use Trader's Execution Price)
+        let price = tradeData.price || 0;
         
-        try {
-            const orderbook = await clobClient.getOrderBook(tradeData.tokenId);
-            
-            if (side === Side.BUY) {
-                // Buying: Match the lowest seller (Asks are sorted ascending price usually)
-                if (orderbook.asks && orderbook.asks.length > 0) {
-                    price = parseFloat(orderbook.asks[0].price);
-                    console.log(`Best Ask Price: ${price}`);
-                    if (price >= 1) {
-                        console.warn('Price >= 1 detected for BUY. Skipping order to avoid zero-profit bet.');
-                        return;
-                    }
+        if (price <= 0) {
+            console.warn(`Invalid price in tradeData (${price}). Attempting to fetch from orderbook as fallback...`);
+            // Fallback to orderbook (Best Ask/Bid) if price is missing
+            try {
+                const orderbook = await clobClient.getOrderBook(tradeData.tokenId);
+                if (side === Side.BUY) {
+                    if (orderbook.asks && orderbook.asks.length > 0) price = parseFloat(orderbook.asks[0].price);
                 } else {
-                    console.warn('No asks found in orderbook. Cannot determine price for BUY.');
-                    return;
+                    if (orderbook.bids && orderbook.bids.length > 0) price = parseFloat(orderbook.bids[0].price);
                 }
+            } catch (err) {
+                console.error('Failed to fetch orderbook for fallback price:', err);
+                return;
+            }
+        }
+        
+        console.log(`Target Price (Maker Mode): ${price}`);
+
+        // 3. Calculate order size (Token Amount)
+        // New Logic: OurStake = (OurBank / TraderBank) * TraderStake
+        // TraderStake = tradeData.takerAmount (USDC)
+        
+        let usdcAmount = 0;
+        let dynamicCopyRatio = params.copyRatio; // Default fallback
+        let currentMyBalance = -1; // Cache for our balance
+
+        try {
+            if (!tradeData.maker) {
+                console.warn('Trader address missing in tradeData, falling back to fixed copyRatio.');
             } else {
-                // Selling: Match the highest buyer (Bids are sorted descending price usually)
-                if (orderbook.bids && orderbook.bids.length > 0) {
-                    price = parseFloat(orderbook.bids[0].price);
-                    console.log(`Best Bid Price: ${price}`);
+                // Fetch Trader's Balance (Remaining USDC after trade)
+                const traderCurrentBalance = await getMyBalance(tradeData.maker);
+                
+                // TraderBank calculation
+                let traderBank = traderCurrentBalance;
+                if (side === Side.BUY) {
+                    traderBank += tradeData.takerAmount;
                 } else {
-                    console.warn('No bids found in orderbook. Cannot determine price for SELL.');
-                    return;
+                    traderBank -= tradeData.takerAmount;
+                    if (traderBank < 0) traderBank = 0; 
+                }
+
+                // Fetch Our Balance
+                currentMyBalance = await getMyBalance(ENV.PROXY_WALLET);
+                const myBank = currentMyBalance;
+
+                console.log(`Balances - Trader: ${traderBank} (approx), Us: ${myBank}`);
+
+                if (traderBank > 0) {
+                    dynamicCopyRatio = myBank / traderBank;
+                    console.log(`Calculated Dynamic Copy Ratio: ${dynamicCopyRatio.toFixed(4)}`);
+                } else {
+                    console.warn('Trader bank is 0 or negative, cannot calculate ratio. Falling back to fixed params.');
                 }
             }
         } catch (err) {
-            console.error('Failed to fetch orderbook:', err);
-            return;
+            console.error('Error fetching balances for ratio calculation:', err);
         }
 
-        // 3. Calculate order size (Token Amount)
-        // tradeData.takerAmount is in USDC
-        // We want to spend: tradeData.takerAmount * params.copyRatio (USDC)
-        // Token Size = USDC Amount / Price
-        let usdcAmount = tradeData.takerAmount * params.copyRatio;
+        // Apply Ratio
+        usdcAmount = tradeData.takerAmount * dynamicCopyRatio;
         
         // Ensure positive
         if (usdcAmount <= 0) {
@@ -67,29 +97,46 @@ const tradeExecutor = async (
             return;
         }
 
-        // Check Balance if Buying to avoid "not enough balance" errors
+        // Check Balance and Free Up Funds if needed
         if (side === Side.BUY) {
             try {
-                const balance = await getMyBalance(ENV.PROXY_WALLET);
+                let balance = currentMyBalance;
+                // If we didn't fetch it successfully above (e.g. error or maker missing), fetch now
+                if (balance < 0) {
+                     balance = await getMyBalance(ENV.PROXY_WALLET);
+                }
+
                 console.log(`Current Proxy USDC Balance: ${balance}`);
                 
+                // Fund Recycling Logic
                 if (usdcAmount > balance) {
-                    console.warn(`Calculated USDC amount ($${usdcAmount}) exceeds balance ($${balance}). Adjusting to balance.`);
-                    // Use 99% of balance to be safe against rounding or small fees if any, though fees are usually 0 for makers
+                    const shortage = usdcAmount - balance;
+                    console.log(`Insufficient balance (Shortage: ${shortage}). Attempting to free up funds from old orders...`);
+                    
+                    await orderManager.freeUpFunds(clobClient, shortage);
+                    
+                    // Re-fetch balance after cancellation
+                    // Add a small delay to ensure balance update propagates if needed, though usually CLOB updates are quick
+                    await new Promise(r => setTimeout(r, 1000));
+                    balance = await getMyBalance(ENV.PROXY_WALLET);
+                    console.log(`New Proxy USDC Balance: ${balance}`);
+                }
+
+                if (usdcAmount > balance) {
+                    console.warn(`Calculated USDC amount ($${usdcAmount}) still exceeds balance ($${balance}). Adjusting to balance.`);
+                    // Use 99% of balance to be safe
                     usdcAmount = balance * 0.99; 
                 }
                 
                 if (usdcAmount < 1) { // Polymarket min order is $1
                      console.warn(`Available USDC amount ($${usdcAmount}) is below minimum $1.`);
-                     // Try to use full balance if it's slightly above 1 but logic reduced it? 
-                     // No, if balance is < 1, we can't trade.
                      if (balance < 1) {
                         console.warn('Insufficient balance (<$1) to place order.');
                         return;
                      }
                 }
             } catch (err) {
-                console.error('Failed to fetch balance, proceeding with calculated amount:', err);
+                console.error('Failed to fetch balance or free funds, proceeding with calculated amount:', err);
             }
         }
 
@@ -102,9 +149,7 @@ const tradeExecutor = async (
             size = 1.01 / price;
         }
 
-        // Round size to appropriate precision (e.g. 2 decimal places? or more?)
-        // Polymarket tokens usually support standard ERC20 precision, but CLOB might limit it.
-        // Let's keep a reasonable precision, e.g., 6 decimal places
+        // Round size to appropriate precision (e.g. 6 decimal places)
         size = parseFloat(size.toFixed(6));
         
         // Re-check value after rounding
@@ -113,23 +158,25 @@ const tradeExecutor = async (
         }
 
         // 4. Place Order
-        console.log(`Placing LIMIT order: Side: ${side}, Size: ${size}, Price: ${price}, TokenID: ${tradeData.tokenId}`);
+        console.log(`Placing LIMIT order (MAKER): Side: ${side}, Size: ${size}, Price: ${price}, TokenID: ${tradeData.tokenId}`);
 
         // Create and Post Order
-        // Note: clob-client handles signing automatically if initialized with credentials
         const order = await clobClient.createOrder({
             tokenID: tradeData.tokenId,
             price: price,
             side: side,
             size: size,
-            feeRateBps: 0, // Maker orders usually 0, Taker might have fee but we specify 0 in order param usually? 
-                           // Actually for Taker (crossing spread) we might need to accept fee?
-                           // Using 0 is standard for limit orders, CLOB matches.
-            nonce: 0 // Optional, client handles it
+            feeRateBps: 0, 
+            nonce: 0 
         });
         
         const response = await clobClient.postOrder(order);
         console.log('Order executed successfully:', response);
+        
+        // Track the order for management
+        if (response && response.orderID) {
+            orderManager.addOrder(response.orderID, price, size, tradeData.tokenId);
+        }
 
     } catch (error) {
         console.error('Error executing trade:', error);

@@ -5,6 +5,8 @@ export interface TradeData {
     side: number;
     makerAmount: number;
     takerAmount: number;
+    maker: string; // The trader's wallet address
+    price?: number; // Execution price
 }
 
 export interface TradeParams {

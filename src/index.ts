@@ -6,8 +6,15 @@ import TradeMonitor from './services/tradeMonitor';
 import tradeExecutor from './services/tradeExecutor';
 import { TradeParams } from './interfaces/tradeInterfaces';
 import { TRADER_LIST } from './config/traders';
+import { startDashboard } from './dashboard/server';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import axios from 'axios';
+
+// Check for dashboard flag
+if (process.argv.includes('--dashboard')) {
+    startDashboard();
+    console.log('Dashboard started. Continuing to bot initialization...');
+}
 
 // Force global proxy agent for axios if proxy is set
 if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
@@ -105,4 +112,9 @@ export const main = async () => {
     }
 };
 
-main();
+// Check if dashboard mode is enabled, if so, do not run main bot logic automatically unless requested
+if (process.argv.includes('--dashboard')) {
+    console.log('Running in Dashboard Mode only.');
+} else {
+    main();
+}

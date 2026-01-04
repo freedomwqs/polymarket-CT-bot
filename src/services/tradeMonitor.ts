@@ -136,7 +136,9 @@ class TradeMonitor extends EventEmitter {
                 tokenId: event.asset, // Data API returns 'asset' as tokenID
                 side: this.parseSide(event.side),
                 makerAmount: parseFloat(event.size || '0'), // size is outcome tokens
-                takerAmount: parseFloat(event.usdcSize || '0') // usdcSize is input amount
+                takerAmount: parseFloat(event.usdcSize || '0'), // usdcSize is input amount
+                maker: wallet,
+                price: parseFloat(event.price || '0')
             };
 
             // Basic validation
